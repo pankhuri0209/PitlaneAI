@@ -5,3 +5,5 @@ __pycache__/
 .venv/
 downloads/
 .DS_Store
+PitLane AI Web Application/node_modules/
+PitLane AI Web Application.zip
