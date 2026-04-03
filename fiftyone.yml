@@ -1,0 +1,10 @@
+name: pitlane-ai
+version: 0.1.0
+description: AI go-kart coaching plugin powered by Twelve Labs
+author: PitLane AI
+license: MIT
+fiftyone_compatibility: ">=0.21"
+operators:
+  - find_lap_errors
+  - technique_search
+  - ask_anything

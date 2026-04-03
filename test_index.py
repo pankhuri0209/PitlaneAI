@@ -12,10 +12,15 @@ from twelvelabs import TwelveLabs
 
 load_dotenv()
 
-INDEX_ID = "69cfea5921ee25d04843f78e"
-
 client = TwelveLabs(api_key=os.environ["TWELVELABS_API_KEY"])
 
+indexes = list(client.indexes.list())
+if not indexes:
+    print("No indexes found for this API key.")
+    exit(1)
+
+index = indexes[0]
+INDEX_ID = index.id
 print(f"Checking index {INDEX_ID}...")
 
 try:
