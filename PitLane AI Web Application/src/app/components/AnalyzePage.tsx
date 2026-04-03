@@ -85,7 +85,11 @@ export function AnalyzePage({ onBack }: { onBack: () => void }) {
         });
       }
       const data = await res.json();
-      setResult(data.result || data.detail || 'No result returned.');
+      if (res.status === 429) {
+        setResult('⚠️ **Rate limit reached** — Twelve Labs search API is limited to 50 requests/day. Please try again tomorrow.\n\nNote: Find Lap Errors and Ask About Lap still work (they use a separate API).');
+      } else {
+        setResult(data.result || data.detail || 'No result returned.');
+      }
     } catch (e) {
       setResult('Error contacting backend. Is uvicorn running?');
     }

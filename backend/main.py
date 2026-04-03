@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from twelvelabs.errors import TooManyRequestsError
 
 # ---------------------------------------------------------------------------
 # Environment
@@ -122,6 +123,8 @@ def list_videos():
         return {"videos": videos}
     except HTTPException:
         raise
+    except TooManyRequestsError as e:
+        raise HTTPException(status_code=429, detail="Twelve Labs rate limit reached (50 req/day). Try again tomorrow.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -160,51 +163,56 @@ def analyze_errors(body: ErrorsRequest):
         return {"result": f"## 🏁 Lap Error Analysis\n\n{result.data}"}
     except HTTPException:
         raise
+    except TooManyRequestsError as e:
+        raise HTTPException(status_code=429, detail="Twelve Labs rate limit reached (50 req/day). Try again tomorrow.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/analyze/best-moments")
 def analyze_best_moments(body: BestMomentsRequest):
-    """Find best driving moments using Marengo semantic search."""
+    """Find best driving moments using Pegasus analyze."""
     try:
         client = _get_client()
-        index_id = _get_index_id()
-        rows = []
-
-        for query, _icon, category in BEST_MOMENT_QUERIES:
-            results = client.search.query(
-                index_id=index_id,
-                query_text=query,
-                search_options=["visual"],
-            )
-            for clip in results:
-                if clip.video_id == body.video_id:
-                    rows.append({
-                        "category": category,
-                        "start": clip.start,
-                        "end": clip.end,
-                        "rank": clip.rank,
-                    })
-
-        if not rows:
-            md = "## 🌟 Best Moments\n\n_No highlights found._"
-        else:
-            rows.sort(key=lambda c: c["start"])
-            table = "\n".join(
-                f"| {_fmt_time(c['start'])} – {_fmt_time(c['end'])} | {c['category']} | #{c['rank']} |"
-                for c in rows
-            )
-            md = (
-                f"## 🌟 Best Moments — {len(rows)} clip(s) found\n\n"
-                f"| Timestamp | Category | Rank |\n"
-                f"|-----------|----------|------|\n"
-                f"{table}\n"
-            )
-
-        return {"result": md}
+        result = client.analyze(
+            video_id=body.video_id,
+            prompt=(
+                "You are an expert go-kart race engineer reviewing onboard lap footage. "
+                "Identify the best and most impressive driving moments in this video. "
+                "Group them into these categories: Smooth Apex, Clean Acceleration, Fast Straight, Perfect Racing Line, Smooth Braking, Impressive Moment.\n\n"
+                "Output ONLY the following markdown, no extra text:\n\n"
+                "### 🎯 Smooth Apex\n"
+                "| Time | Description |\n"
+                "|------|-------------|\n"
+                "| MM:SS | what made this apex clean |\n\n"
+                "### 🚀 Clean Acceleration\n"
+                "| Time | Description |\n"
+                "|------|-------------|\n"
+                "| MM:SS | what made this acceleration smooth |\n\n"
+                "### ⚡ Fast Straight\n"
+                "| Time | Description |\n"
+                "|------|-------------|\n"
+                "| MM:SS | describe the fast section |\n\n"
+                "### 📐 Perfect Racing Line\n"
+                "| Time | Description |\n"
+                "|------|-------------|\n"
+                "| MM:SS | what made the line optimal |\n\n"
+                "### 🛑 Smooth Braking\n"
+                "| Time | Description |\n"
+                "|------|-------------|\n"
+                "| MM:SS | what made this braking controlled |\n\n"
+                "### 🏆 Impressive Moment\n"
+                "| Time | Description |\n"
+                "|------|-------------|\n"
+                "| MM:SS | what made this moment stand out |\n\n"
+                "Only include categories where you found genuine highlights. End with: **Total highlights found: N**"
+            ),
+        )
+        return {"result": f"## 🌟 Best Moments\n\n{result.data}"}
     except HTTPException:
         raise
+    except TooManyRequestsError:
+        raise HTTPException(status_code=429, detail="Twelve Labs rate limit reached. Try again tomorrow.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -233,6 +241,8 @@ def analyze_ask(body: AskRequest):
         return {"result": f"## 💬 {body.question}\n\n{result.data}"}
     except HTTPException:
         raise
+    except TooManyRequestsError as e:
+        raise HTTPException(status_code=429, detail="Twelve Labs rate limit reached (50 req/day). Try again tomorrow.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
