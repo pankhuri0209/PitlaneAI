@@ -6,5 +6,5 @@ license: MIT
 fiftyone_compatibility: ">=0.21"
 operators:
   - find_lap_errors
-  - technique_search
+  - find_best_moments
   - ask_anything

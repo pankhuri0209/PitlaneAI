@@ -115,70 +115,131 @@ class FindLapErrors(foo.Operator):
 
 
 # ---------------------------------------------------------------------------
-# Operator 2 — Technique Search (Marengo)
+# Operator 2 — Find Best Moments (Marengo)
 # ---------------------------------------------------------------------------
 
-class TechniqueSearch(foo.Operator):
+BEST_MOMENT_QUERIES = [
+    ("kart hitting apex smoothly on corner entry",       "🎯", "Smooth Apex"),
+    ("smooth throttle acceleration out of corner",       "🚀", "Clean Acceleration"),
+    ("kart at full speed on straight",                   "⚡", "Fast Straight"),
+    ("optimal racing line through corner",               "📐", "Perfect Racing Line"),
+    ("controlled progressive braking before turn",       "🛑", "Smooth Braking"),
+    ("impressive fast exciting driving moment",          "🏆", "Impressive Moment"),
+]
+
+class FindBestMoments(foo.Operator):
     @property
     def config(self):
         return foo.OperatorConfig(
-            name="technique_search",
-            label="Search Driving Technique",
-            description="Find specific moments using Marengo semantic search across all indexed videos",
+            name="find_best_moments",
+            label="Find Best Moments",
+            description="Highlight the best driving moments in this lap using Marengo",
         )
 
     def resolve_input(self, ctx):
         inputs = types.Object()
-        inputs.str(
-            "query",
-            label="Search query",
-            description="e.g. 'understeer', 'late apex', 'early braking', 'wheel spin'",
-            required=True,
-        )
         inputs.float(
             "threshold",
             label="Confidence threshold (0-1)",
+            description="Lower = more results, Higher = only strong matches",
             default=0.5,
             required=False,
         )
         return types.Property(inputs)
 
     def execute(self, ctx):
-        query = ctx.params.get("query", "")
-        threshold = ctx.params.get("threshold", 0.5)
+        import fiftyone as fo
+
         client = _get_client()
+        index_id = _get_index_id()
+        total = len(BEST_MOMENT_QUERIES)
 
-        ctx.set_progress(0.3, label=f"Searching for '{query}'...")
-        results = client.search.query(
-            index_id=_get_index_id(),
-            query_text=query,
-            options=["visual", "audio"],
-            threshold=threshold,
-        )
+        # Build a map: twelvelabs_video_id -> FiftyOne sample
+        vid_to_sample = {
+            s["twelvelabs_video_id"]: s
+            for s in ctx.dataset
+            if s.get_field("twelvelabs_video_id")
+        }
 
-        clips = []
-        for page in results:
-            for clip in page.data:
-                clips.append({
-                    "start": round(clip.start, 2),
-                    "end": round(clip.end, 2),
-                    "score": round(clip.score, 3),
-                    "video_id": clip.video_id,
-                })
+        # Collect clips per video_id
+        clips_by_vid = {vid: [] for vid in vid_to_sample}
+
+        for i, (query, icon, category) in enumerate(BEST_MOMENT_QUERIES):
+            ctx.set_progress((i + 1) / total * 0.85, label=f"Searching: {category}...")
+            results = client.search.query(
+                index_id=index_id,
+                query_text=query,
+                search_options=["visual"],
+            )
+            for clip in results:
+                if clip.video_id in clips_by_vid:
+                    clips_by_vid[clip.video_id].append({
+                        "category": category,
+                        "start": clip.start,
+                        "end": clip.end,
+                        "rank": clip.rank,
+                    })
+
+        ctx.set_progress(0.9, label="Saving clips to timeline...")
+
+        # Save TemporalDetections onto each sample
+        summary_rows = []
+        for vid_id, clips in clips_by_vid.items():
+            if not clips:
+                continue
+            sample = vid_to_sample[vid_id]
+            fps = sample.get_field("metadata.frame_rate") or 30.0
+
+            detections = []
+            for c in clips:
+                start_frame = max(1, int(c["start"] * fps))
+                end_frame   = max(start_frame + 1, int(c["end"] * fps))
+                detections.append(fo.TemporalDetection(
+                    label=c["category"],
+                    support=[start_frame, end_frame],
+                ))
+                summary_rows.append({**c, "video_id": vid_id})
+
+            sample["best_moments"] = fo.TemporalDetections(detections=detections)
+            sample.save()
 
         ctx.set_progress(1.0, label="Done")
-        return {
-            "query": query,
-            "clip_count": len(clips),
-            "clips": str(clips),
-        }
+        ctx.trigger("reload_dataset")
+
+        if not summary_rows:
+            md = "## 🌟 Best Moments\n\n_No highlights found._"
+        else:
+            summary_rows.sort(key=lambda c: c["start"])
+            rows = "\n".join(
+                f"| {_fmt_time(c['start'])} – {_fmt_time(c['end'])} "
+                f"| {c['category']} "
+                f"| #{c['rank']} |"
+                for c in summary_rows
+            )
+            md = (
+                f"## 🌟 Best Moments — {len(summary_rows)} clip(s) saved to timeline\n\n"
+                f"| Timestamp | Category | Rank |\n"
+                f"|-----------|----------|------|\n"
+                f"{rows}\n\n"
+                f"_Clips are now visible as colored segments on the video timeline._"
+            )
+
+        return {"highlights": md}
 
     def resolve_output(self, ctx):
         outputs = types.Object()
-        outputs.str("query", label="Query")
-        outputs.int("clip_count", label="Clips found")
-        outputs.str("clips", label="Matched clips (start/end seconds + score)")
+        outputs.str(
+            "highlights",
+            label="Best Moments",
+            view=types.MarkdownView(read_only=True),
+        )
         return types.Property(outputs)
+
+
+def _fmt_time(seconds):
+    m = int(seconds) // 60
+    s = int(seconds) % 60
+    return f"{m:02d}:{s:02d}"
 
 
 # ---------------------------------------------------------------------------
@@ -247,5 +308,5 @@ class AskAnything(foo.Operator):
 
 def register(plugin):
     plugin.register(FindLapErrors)
-    plugin.register(TechniqueSearch)
+    plugin.register(FindBestMoments)
     plugin.register(AskAnything)
