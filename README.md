@@ -2,6 +2,7 @@
 
 > **Built at Voxel51 Hackathon · April 2026**
 > Northeastern University · Team NUPitlane
+> 📊 [View Presentation](https://python-work-73491477.figma.site/)
 
 PitLane AI brings professional-grade race engineering to every kart driver. Upload your onboard lap video, and let AI find your mistakes, highlight your best moments, and generate a full coaching report — in seconds.
 
