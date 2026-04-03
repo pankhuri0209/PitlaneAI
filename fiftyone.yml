@@ -8,3 +8,4 @@ operators:
   - find_lap_errors
   - find_best_moments
   - ask_anything
+  - generate_coaching_report

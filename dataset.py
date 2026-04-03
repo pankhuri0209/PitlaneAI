@@ -1,78 +1,46 @@
 import os
 import subprocess
-
-# Must be set BEFORE importing fiftyone
-os.environ["FIFTYONE_PLUGINS_DIR"] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
 import fiftyone as fo
-from dotenv import load_dotenv
-from twelvelabs import TwelveLabs
 
-load_dotenv()
-client = TwelveLabs(api_key=os.environ["TWELVELABS_API_KEY"])
+URLS = [
+    "https://www.youtube.com/watch?v=teMpvybRYms",
+    "https://www.youtube.com/watch?v=UB6v9BMFkeY",
+    "https://www.youtube.com/watch?v=AARTajBBPZw",
+]
+OUT = os.path.join(os.path.dirname(__file__), "kart_clips")
+os.makedirs(OUT, exist_ok=True)
 
-# Find the first index
-indexes = list(client.indexes.list())
-if not indexes:
-    print("No indexes found for this API key.")
-    exit(1)
-INDEX_ID = indexes[0].id
-print(f"Using index: {getattr(indexes[0], 'name', INDEX_ID)} ({INDEX_ID})")
-
-# Fetch videos with their HLS URLs
-print("Fetching videos from Twelve Labs...")
-tl_videos = list(client.indexes.videos.list(INDEX_ID))
-if not tl_videos:
-    print("No videos found in the index.")
-    exit(1)
-
-# Download HLS streams as MP4 files
-DOWNLOADS = os.path.join(os.path.dirname(__file__), "downloads")
-os.makedirs(DOWNLOADS, exist_ok=True)
-
-samples = []
-for v in tl_videos:
-    video = client.indexes.videos.retrieve(INDEX_ID, v.id)
-    filename = getattr(video, "filename", None) or f"{v.id}.mp4"
-    # Ensure .mp4 extension
-    base = os.path.splitext(filename)[0]
-    local_path = os.path.join(DOWNLOADS, f"{base}.mp4")
-
-    hls = getattr(video, "hls", None)
-    hls_url = getattr(hls, "video_url", None) if hls else None
-
-    if not hls_url:
-        print(f"  SKIP {filename} — no stream URL")
-        continue
-
-    if os.path.exists(local_path):
-        print(f"  Already downloaded: {os.path.basename(local_path)}")
-    else:
-        print(f"  Downloading: {filename}...")
+# Only download if videos don't already exist
+existing = [f for f in os.listdir(OUT) if f.endswith(".mp4")] if os.path.exists(OUT) else []
+if not existing:
+    print("Downloading go-kart clips (first time only)...")
+    for url in URLS:
         subprocess.run([
-            "ffmpeg", "-y",
-            "-i", hls_url,
-            "-c", "copy",
-            local_path
-        ], check=True)
-        print(f"  Saved: {os.path.basename(local_path)}")
+            "yt-dlp",
+            "-f", "best[height<=720][ext=mp4]/best[height<=720]",
+            "--merge-output-format", "mp4",
+            "-o", os.path.join(OUT, "%(title)s.%(ext)s"),
+            "--no-playlist",
+            url,
+        ])
+else:
+    print(f"Videos already downloaded ({len(existing)} files) — skipping.")
 
-    s = fo.Sample(filepath=local_path)
-    s["twelvelabs_video_id"] = v.id
-    s["twelvelabs_filename"] = filename
-    samples.append(s)
-
-if not samples:
-    print("No videos downloaded.")
+mp4s = [os.path.join(OUT, f) for f in os.listdir(OUT) if f.endswith(".mp4")]
+if not mp4s:
+    print("No videos found — check kart_clips/ folder.")
     exit(1)
 
+# Load existing dataset or create new one
 if fo.dataset_exists("pitlane-ai"):
-    fo.delete_dataset("pitlane-ai")
+    print("Dataset already exists — loading it.")
+    dataset = fo.load_dataset("pitlane-ai")
+else:
+    dataset = fo.Dataset(name="pitlane-ai", persistent=True)
+    dataset.add_samples([fo.Sample(filepath=f) for f in mp4s])
+    dataset.compute_metadata()
+print(dataset)
 
-dataset = fo.Dataset(name="pitlane-ai", persistent=True)
-dataset.add_samples(samples)
-dataset.compute_metadata()
-print(f"\nLoaded {len(samples)} video(s) into FiftyOne.")
-
-session = fo.launch_app(dataset)
+session = fo.launch_app(dataset, auto=False)
+print(f"App running at http://localhost:{session.server_port}")
 session.wait()

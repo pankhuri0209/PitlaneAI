@@ -39,6 +39,7 @@ export function AnalyzePage({ onBack }: { onBack: () => void }) {
   const [activeOp, setActiveOp] = useState('');
   const [errorTypes, setErrorTypes] = useState('all driving errors');
   const [question, setQuestion] = useState('');
+  const [focus, setFocus] = useState('Full Analysis');
   const [fetchError, setFetchError] = useState('');
 
   useEffect(() => {
@@ -70,11 +71,17 @@ export function AnalyzePage({ onBack }: { onBack: () => void }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ video_id: selectedVideo }),
         });
-      } else {
+      } else if (op === 'ask') {
         res = await fetch(`${API}/analyze/ask`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ video_id: selectedVideo, question }),
+        });
+      } else {
+        res = await fetch(`${API}/analyze/coaching-report`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ video_id: selectedVideo, focus }),
         });
       }
       const data = await res.json();
@@ -195,6 +202,38 @@ export function AnalyzePage({ onBack }: { onBack: () => void }) {
               style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.08)' }}
               onKeyDown={e => e.key === 'Enter' && run('ask')}
             />
+          </div>
+
+          {/* Op 4 - Generate Coaching Report */}
+          <div className="rounded-xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div className="flex items-start justify-between gap-4 mb-3">
+              <div>
+                <h3 className="font-semibold text-base">📊 Generate Coaching Report</h3>
+                <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>Full telemetry report with performance scores — takes 30–60s</p>
+              </div>
+              <button
+                onClick={() => run('report')}
+                disabled={loading || !selectedVideo}
+                className="px-4 py-2 rounded-lg text-sm font-semibold shrink-0 disabled:opacity-50 transition-all"
+                style={{ backgroundColor: 'var(--accent-green)', color: '#000' }}
+              >
+                {loading && activeOp === 'report' ? 'Generating...' : 'Run'}
+              </button>
+            </div>
+            <div className="relative">
+              <select
+                value={focus}
+                onChange={e => setFocus(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg text-xs appearance-none pr-8"
+                style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.08)' }}
+              >
+                <option>Full Analysis</option>
+                <option>Racing Line Only</option>
+                <option>Braking Only</option>
+                <option>Throttle &amp; Exit Only</option>
+              </select>
+              <ChevronDown size={12} className="absolute right-2 top-2.5 pointer-events-none" style={{ color: 'var(--text-secondary)' }} />
+            </div>
           </div>
         </div>
 

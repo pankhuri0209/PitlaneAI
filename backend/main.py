@@ -5,6 +5,7 @@ No FiftyOne dependency. Uses the Twelve Labs Python SDK directly.
 """
 
 import os
+import json
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -18,6 +19,7 @@ from pydantic import BaseModel
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 TWELVELABS_API_KEY = os.environ.get("TWELVELABS_API_KEY", "")
+GROQ_API_KEY       = os.environ.get("GROQ_API_KEY", "")
 
 # ---------------------------------------------------------------------------
 # App + CORS
@@ -94,6 +96,11 @@ class BestMomentsRequest(BaseModel):
 class AskRequest(BaseModel):
     video_id: str
     question: str
+
+
+class CoachingReportRequest(BaseModel):
+    video_id: str
+    focus: Optional[str] = "Full Analysis"
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +231,130 @@ def analyze_ask(body: AskRequest):
             ),
         )
         return {"result": f"## 💬 {body.question}\n\n{result.data}"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/analyze/coaching-report")
+def analyze_coaching_report(body: CoachingReportRequest):
+    """Generate a full coaching report using Pegasus + Groq LLaMA (two-step pipeline)."""
+    try:
+        from groq import Groq
+
+        if not GROQ_API_KEY:
+            raise HTTPException(status_code=500, detail="GROQ_API_KEY not set.")
+
+        tl_client   = _get_client()
+        groq_client = Groq(api_key=GROQ_API_KEY)
+
+        focus_instruction = {
+            "Full Analysis":        "Cover racing line, braking, throttle, and car control.",
+            "Racing Line Only":     "Focus only on racing line and corner entry/exit.",
+            "Braking Only":         "Focus only on braking points, trail braking, and stopping distances.",
+            "Throttle & Exit Only": "Focus only on throttle application, wheelspin, and corner exits.",
+        }.get(body.focus or "Full Analysis", "Cover racing line, braking, throttle, and car control.")
+
+        # Step 1: Pegasus watches the full lap
+        pegasus_result = tl_client.analyze(
+            video_id=body.video_id,
+            prompt=(
+                "Watch this entire go-kart onboard lap carefully. "
+                f"{focus_instruction} "
+                "Describe in detail everything you observe every 30 seconds with timestamps (MM:SS). "
+                "Be raw, factual, and detailed — this will be reviewed by a race engineer."
+            ),
+        )
+        raw_observations = pegasus_result.data
+
+        # Step 2: Groq extracts structured scores
+        scores_response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a data analyst. Extract numerical scores from lap observations. Respond with valid JSON only.",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"From these go-kart lap observations, extract performance scores.\n\n"
+                        f"{raw_observations}\n\n"
+                        "Return JSON in exactly this format:\n"
+                        '{"segments":[{"time":"0:00","racing_line":7,"braking":6,"throttle":8}],'
+                        '"overall":{"racing_line":7,"braking":6,"throttle":8,"consistency":7}}'
+                        "\nScore each metric 1-10. JSON only, no extra text."
+                    ),
+                },
+            ],
+            temperature=0.1,
+            max_tokens=800,
+        )
+
+        try:
+            scores_text = scores_response.choices[0].message.content.strip()
+            if "```" in scores_text:
+                scores_text = scores_text.split("```")[1].lstrip("json").strip()
+            scores_data = json.loads(scores_text)
+            segments = scores_data.get("segments", [])
+            overall  = scores_data.get("overall", {})
+        except Exception:
+            segments = []
+            overall  = {"racing_line": 6, "braking": 6, "throttle": 6, "consistency": 6}
+
+        rl = overall.get("racing_line", "?")
+        br = overall.get("braking", "?")
+        th = overall.get("throttle", "?")
+
+        # Step 3: Groq writes the coaching report
+        report_response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a professional karting race engineer with 20 years experience. "
+                        "Write precise, actionable coaching reports — data-driven, specific, no fluff."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Raw lap observations:\n{raw_observations}\n\n"
+                        f"Performance scores by segment: {json.dumps(segments)}\n"
+                        f"Overall scores: {json.dumps(overall)}\n\n"
+                        f"Write a professional coaching report:\n\n"
+                        f"## PERFORMANCE SUMMARY\n"
+                        f"2-3 sentences overall assessment.\n\n"
+                        f"## RACING LINE  (score: {rl}/10)\n"
+                        f"- Specific observations with timestamps\n\n"
+                        f"## BRAKING POINTS  (score: {br}/10)\n"
+                        f"- Specific observations with timestamps\n\n"
+                        f"## THROTTLE & EXIT SPEED  (score: {th}/10)\n"
+                        f"- Specific observations with timestamps\n\n"
+                        f"## LAP TIME LOSSES\n"
+                        f"Estimate time lost per sector in tenths of seconds.\n\n"
+                        f"## TOP 3 PRIORITY IMPROVEMENTS\n"
+                        f"1. [Specific corner + timestamp + what to do differently]\n"
+                        f"2.\n"
+                        f"3.\n\n"
+                        f"## OVERALL RATING: X/10\n"
+                        f"Biggest strength: ...\n"
+                        f"Biggest weakness: ..."
+                    ),
+                },
+            ],
+            temperature=0.3,
+            max_tokens=1200,
+        )
+        report = report_response.choices[0].message.content
+
+        return {
+            "result": report,
+            "segments": segments,
+            "overall": overall,
+        }
     except HTTPException:
         raise
     except Exception as e:
