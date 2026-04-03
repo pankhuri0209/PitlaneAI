@@ -77,22 +77,40 @@ class FindLapErrors(foo.Operator):
             video_id=video_id,
             prompt=(
                 "You are an expert go-kart race engineer reviewing onboard lap footage. "
-                f"Identify every driving error in this video, focusing on: {error_types}. "
-                "For each error found, output exactly this format:\n"
-                "- [MM:SS] ERROR TYPE: one-sentence description of what went wrong and why it costs time.\n\n"
-                "Errors to detect: missed apex, early apex, late braking, early braking, "
-                "understeer, oversteer, wheelspin on exit, poor throttle application, "
-                "wide entry, wide exit, wrong racing line, late turn-in, early turn-in. "
-                "List every error ordered by timestamp. Be specific and concise."
+                f"Identify every driving error, focusing on: {error_types}. "
+                "Group errors into these categories: Racing Line, Braking, Throttle & Traction, Car Control.\n\n"
+                "Output ONLY the following markdown, no extra text:\n\n"
+                "### 🔴 Racing Line\n"
+                "| Time | Error | Impact |\n"
+                "|------|-------|--------|\n"
+                "| MM:SS | error name | one-line impact |\n\n"
+                "### 🟡 Braking\n"
+                "| Time | Error | Impact |\n"
+                "|------|-------|--------|\n"
+                "| MM:SS | error name | one-line impact |\n\n"
+                "### 🟠 Throttle & Traction\n"
+                "| Time | Error | Impact |\n"
+                "|------|-------|--------|\n"
+                "| MM:SS | error name | one-line impact |\n\n"
+                "### 🔵 Car Control\n"
+                "| Time | Error | Impact |\n"
+                "|------|-------|--------|\n"
+                "| MM:SS | error name | one-line impact |\n\n"
+                "Only include categories that have errors. End with: **Total errors found: N**"
             ),
         )
 
         ctx.set_progress(1.0, label="Done")
-        return {"errors": result.data}
+        md = f"## 🏁 Lap Error Analysis\n\n{result.data}"
+        return {"errors": md}
 
     def resolve_output(self, ctx):
         outputs = types.Object()
-        outputs.str("errors", label="Lap Errors")
+        outputs.str(
+            "errors",
+            label="Lap Errors",
+            view=types.MarkdownView(read_only=True),
+        )
         return types.Property(outputs)
 
 
@@ -195,17 +213,31 @@ class AskAnything(foo.Operator):
         result = client.analyze(
             video_id=video_id,
             prompt=(
-                f"You are an expert go-kart race engineer. "
-                f"Answer this question about the lap video with specific timestamps where relevant: {question}"
+                f"You are an expert go-kart race engineer. Answer this question: {question}\n\n"
+                "Format your response in markdown using EXACTLY this structure:\n\n"
+                "### ✅ Verdict\n"
+                "One bold sentence direct answer (yes/no + why).\n\n"
+                "### 📍 Key Moments\n"
+                "| Time | Observation |\n"
+                "|------|-------------|\n"
+                "| MM:SS | what is happening at this timestamp |\n\n"
+                "### 💡 Recommendation\n"
+                "One or two sentences on what to do differently or keep doing.\n\n"
+                "Be concise, specific, and use racing terminology."
             ),
         )
 
         ctx.set_progress(1.0, label="Done")
-        return {"answer": result.data}
+        md = f"## 💬 {question}\n\n{result.data}"
+        return {"answer": md}
 
     def resolve_output(self, ctx):
         outputs = types.Object()
-        outputs.str("answer", label="Answer")
+        outputs.str(
+            "answer",
+            label="Answer",
+            view=types.MarkdownView(read_only=True),
+        )
         return types.Property(outputs)
 
 
