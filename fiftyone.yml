@@ -4,8 +4,10 @@ description: AI go-kart coaching plugin powered by Twelve Labs
 author: PitLane AI
 license: MIT
 fiftyone_compatibility: ">=0.21"
+js_bundle: js/dist/index.umd.js
 operators:
   - find_lap_errors
   - find_best_moments
   - ask_anything
   - generate_coaching_report
+  - clear_history

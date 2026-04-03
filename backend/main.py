@@ -7,10 +7,13 @@ No FiftyOne dependency. Uses the Twelve Labs Python SDK directly.
 import os
 import json
 from typing import Optional
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from twelvelabs.errors import TooManyRequestsError
 
@@ -369,3 +372,45 @@ def analyze_coaching_report(body: CoachingReportRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/clear-history")
+def clear_history():
+    """Clear all analysis fields from every sample in the FiftyOne dataset."""
+    try:
+        import fiftyone as fo
+        FIELDS = ["lap_errors", "best_moments", "ask_moments", "coaching_moments"]
+        if not fo.dataset_exists("pitlane-ai"):
+            return {"result": "Dataset not found."}
+        dataset = fo.load_dataset("pitlane-ai")
+        cleared = 0
+        for sample in dataset:
+            changed = False
+            for field in FIELDS:
+                try:
+                    if sample.get_field(field) is not None:
+                        sample[field] = None
+                        changed = True
+                except Exception:
+                    pass
+            if changed:
+                sample.save()
+                cleared += 1
+        return {"result": f"Cleared analysis data from {cleared} video(s)."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Serve React web app (must come LAST — catches all unmatched routes)
+# ---------------------------------------------------------------------------
+
+_static_dir = Path(__file__).parent / "static"
+
+if _static_dir.exists():
+    app.mount("/assets", StaticFiles(directory=_static_dir / "assets"), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def serve_spa(full_path: str):
+        """Serve the React SPA for any non-API route."""
+        return FileResponse(_static_dir / "index.html")

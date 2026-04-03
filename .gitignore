@@ -7,3 +7,12 @@ downloads/
 .DS_Store
 PitLane AI Web Application/node_modules/
 PitLane AI Web Application.zip
+js/node_modules/
+kart_clips/
+test.py
+test_index.py
+test_search.py
+test_twelvelabs.py
+dataset.py
+link_videos.py
+concurrent-plotting-pinwheel.md

@@ -17,6 +17,12 @@ export default defineConfig({
     },
   },
 
+  // Build output goes into backend/static so FastAPI can serve the app
+  build: {
+    outDir: path.resolve(__dirname, '../backend/static'),
+    emptyOutDir: true,
+  },
+
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
   assetsInclude: ['**/*.svg', '**/*.csv'],
 })

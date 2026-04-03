@@ -1,0 +1,8 @@
+name: pitlaneai
+version: 1.0.0
+description: PitLane AI — unified go-kart coaching hub (all 4 analyses in one operator)
+author: PitLane AI
+license: MIT
+fiftyone_compatibility: ">=0.21"
+operators:
+  - pitlane_ai

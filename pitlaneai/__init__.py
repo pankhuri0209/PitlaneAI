@@ -1,13 +1,11 @@
 """
-PitLane AI — Go-Kart Video Analysis FiftyOne Plugin
-Powered by Twelve Labs (Marengo + Pegasus) + Groq LLaMA
+PitLane AI — Unified Go-Kart Coaching Hub
+Single operator with menu-driven flow: choose an analysis, run it, return to menu.
 """
 
 import os
 import re
 import json
-import subprocess
-import sys
 from dotenv import load_dotenv
 import fiftyone as fo
 import fiftyone.operators as foo
@@ -15,35 +13,23 @@ import fiftyone.operators.types as types
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
-load_dotenv(os.path.join(_PLUGIN_DIR, ".env"))
+load_dotenv(os.path.join(_PLUGIN_DIR, "..", ".env"))
 TWELVELABS_API_KEY = os.environ.get("TWELVELABS_API_KEY", "")
 GROQ_API_KEY       = os.environ.get("GROQ_API_KEY", "")
 
 _index_id_cache = None
 
+# Analysis fields managed by this plugin (used by Clear All Analyses)
+_ANALYSIS_FIELDS = ["lap_errors", "best_moments", "ask_moments", "coaching_moments"]
 
-# ---------------------------------------------------------------------------
-# Auto-start the FastAPI backend when the plugin loads
-# ---------------------------------------------------------------------------
-
-def _start_backend():
-    import urllib.request
-    try:
-        urllib.request.urlopen("http://localhost:8000", timeout=1)
-        return
-    except Exception:
-        pass
-    backend_dir = os.path.join(_PLUGIN_DIR, "backend")
-    if not os.path.isdir(backend_dir):
-        return
-    subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "main:app", "--port", "8000", "--host", "127.0.0.1"],
-        cwd=backend_dir,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-_start_backend()
+BEST_MOMENT_QUERIES = [
+    ("kart hitting apex smoothly on corner entry",  "Smooth Apex"),
+    ("smooth throttle acceleration out of corner",  "Clean Acceleration"),
+    ("kart at full speed on straight",              "Fast Straight"),
+    ("optimal racing line through corner",          "Perfect Racing Line"),
+    ("controlled progressive braking before turn",  "Smooth Braking"),
+    ("impressive fast exciting driving moment",     "Impressive Moment"),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -127,32 +113,128 @@ def _save_timeline_clips(ctx, text, field_name, fps, clip_duration=7):
     return len(detections)
 
 
-# Analysis fields managed by this plugin (used by ClearHistory)
-_ANALYSIS_FIELDS = ["lap_errors", "best_moments", "ask_moments", "coaching_moments"]
-
-
 # ---------------------------------------------------------------------------
-# Operator 1 — Find Lap Errors
+# Unified Operator — PitLane AI Hub
 # ---------------------------------------------------------------------------
 
-class FindLapErrors(foo.Operator):
+class PitLaneAI(foo.Operator):
     @property
     def config(self):
         return foo.OperatorConfig(
-            name="find_lap_errors",
-            label="Find Lap Errors",
-            description="Detect every driving mistake in this lap with timestamps using Pegasus",
-            allow_immediate_execution=True,
+            name="pitlane_ai",
+            label="PitLane AI",
+            description="Go-kart coaching hub — choose an analysis and get instant AI feedback",
         )
+
+    # ── Inputs: menu dropdown + dynamic per-operation fields ────────────────
 
     def resolve_input(self, ctx):
         inputs = types.Object()
-        inputs.view("notice", view=types.Notice(
-            label="Pegasus will scan the full lap and save every error as a clip on the timeline."
-        ))
+
+        # Phase 1: Operation selector
+        choices = types.Choices()
+        choices.add_choice("find_lap_errors",   label="Find Lap Errors")
+        choices.add_choice("find_best_moments", label="Find Best Moments")
+        choices.add_choice("ask_anything",      label="Ask About This Lap")
+        choices.add_choice("coaching_report",   label="Generate Coaching Report")
+        choices.add_choice("clear_history",     label="Clear All Analyses")
+
+        inputs.enum(
+            "operation",
+            values=choices.values(),
+            label="Choose Analysis",
+            description="Select which analysis to run on this lap",
+            view=choices,
+        )
+
+        # Phase 2: Operation-specific inputs (appear after selection)
+        op = ctx.params.get("operation")
+
+        if op == "find_lap_errors":
+            inputs.view("notice", view=types.Notice(
+                label="Pegasus will scan the full lap and save every error as a clip on the timeline."
+            ))
+
+        elif op == "find_best_moments":
+            inputs.view("notice", view=types.Notice(
+                label="Marengo will search all videos for 6 categories of best moments and save them to the timeline."
+            ))
+
+        elif op == "ask_anything":
+            inputs.str(
+                "question",
+                label="Your question",
+                description="e.g. 'Was my racing line through Turn 3 correct?'",
+                required=True,
+            )
+
+        elif op == "coaching_report":
+            inputs.view("notice", view=types.Notice(
+                label="Takes 30-60 seconds. Pegasus analyzes the full lap, then Groq LLaMA writes a report with performance graphs."
+            ))
+            inputs.enum(
+                "focus",
+                values=["Full Analysis", "Racing Line Only", "Braking Only", "Throttle & Exit Only"],
+                label="Analysis Focus",
+                default="Full Analysis",
+                view=types.DropdownView(),
+            )
+
+        elif op == "clear_history":
+            inputs.view("notice", view=types.Notice(
+                label="This will clear all analysis results (lap errors, best moments, ask moments, coaching moments) from every video in the dataset."
+            ))
+
         return types.Property(inputs)
 
+    # ── Execute: route to the chosen analysis ───────────────────────────────
+
     def execute(self, ctx):
+        op = ctx.params.get("operation")
+        if op == "find_lap_errors":   return self._find_lap_errors(ctx)
+        if op == "find_best_moments": return self._find_best_moments(ctx)
+        if op == "ask_anything":      return self._ask_anything(ctx)
+        if op == "coaching_report":   return self._coaching_report(ctx)
+        if op == "clear_history":     return self._clear_history(ctx)
+        return {"result": "_No operation selected._"}
+
+    # ── Outputs: dynamic based on chosen operation ───────────────────────────
+
+    def resolve_output(self, ctx):
+        outputs = types.Object()
+        op = ctx.params.get("operation")
+
+        if op == "find_lap_errors":
+            outputs.str("errors", label="Lap Errors",
+                        view=types.MarkdownView(read_only=True))
+
+        elif op == "find_best_moments":
+            outputs.str("highlights", label="Best Moments",
+                        view=types.MarkdownView(read_only=True))
+
+        elif op == "ask_anything":
+            outputs.str("answer", label="Answer",
+                        view=types.MarkdownView(read_only=True))
+
+        elif op == "coaching_report":
+            outputs.str("report", label="Coaching Report",
+                        view=types.MarkdownView(read_only=True))
+            outputs.plot("line_chart",  label="Performance Over Lap")
+            outputs.plot("radar_chart", label="Driver Skill Radar")
+
+        elif op == "clear_history":
+            outputs.str("status", label="Result",
+                        view=types.MarkdownView(read_only=True))
+
+        else:
+            outputs.str("result", label="Result",
+                        view=types.MarkdownView(read_only=True))
+
+        return types.Property(outputs)
+
+    # ── Private: Find Lap Errors ─────────────────────────────────────────────
+
+    def _find_lap_errors(self, ctx):
         video_id = _get_video_id(ctx)
         client   = _get_client()
         sample   = ctx.dataset[ctx.current_sample]
@@ -190,51 +272,11 @@ class FindLapErrors(foo.Operator):
         n = _save_timeline_clips(ctx, result.data, "lap_errors", fps)
 
         ctx.set_progress(1.0, label="Done")
-        md = (
-            f"## Lap Error Analysis — {n} clip(s) on timeline\n\n"
-            f"{result.data}\n\n"
-            f"_Error clips visible on video timeline._"
-        )
-        return {"errors": md}
+        return {"errors": f"## Lap Error Analysis — {n} clip(s) on timeline\n\n{result.data}\n\n_Error clips visible on video timeline._"}
 
-    def resolve_output(self, ctx):
-        outputs = types.Object()
-        outputs.str("errors", label="Lap Errors", view=types.MarkdownView(read_only=True))
-        return types.Property(outputs)
+    # ── Private: Find Best Moments ───────────────────────────────────────────
 
-
-# ---------------------------------------------------------------------------
-# Operator 2 — Find Best Moments
-# ---------------------------------------------------------------------------
-
-BEST_MOMENT_QUERIES = [
-    ("kart hitting apex smoothly on corner entry",  "Smooth Apex"),
-    ("smooth throttle acceleration out of corner",  "Clean Acceleration"),
-    ("kart at full speed on straight",              "Fast Straight"),
-    ("optimal racing line through corner",          "Perfect Racing Line"),
-    ("controlled progressive braking before turn",  "Smooth Braking"),
-    ("impressive fast exciting driving moment",     "Impressive Moment"),
-]
-
-
-class FindBestMoments(foo.Operator):
-    @property
-    def config(self):
-        return foo.OperatorConfig(
-            name="find_best_moments",
-            label="Find Best Moments",
-            description="Highlight the best driving moments using Marengo semantic search",
-            allow_immediate_execution=True,
-        )
-
-    def resolve_input(self, ctx):
-        inputs = types.Object()
-        inputs.view("notice", view=types.Notice(
-            label="Marengo will search all videos for 6 categories of best moments and save them to the timeline."
-        ))
-        return types.Property(inputs)
-
-    def execute(self, ctx):
+    def _find_best_moments(self, ctx):
         client   = _get_client()
         index_id = _get_index_id()
         total    = len(BEST_MOMENT_QUERIES)
@@ -304,36 +346,9 @@ class FindBestMoments(foo.Operator):
             )
         return {"highlights": md}
 
-    def resolve_output(self, ctx):
-        outputs = types.Object()
-        outputs.str("highlights", label="Best Moments", view=types.MarkdownView(read_only=True))
-        return types.Property(outputs)
+    # ── Private: Ask Anything ────────────────────────────────────────────────
 
-
-# ---------------------------------------------------------------------------
-# Operator 3 — Ask Anything
-# ---------------------------------------------------------------------------
-
-class AskAnything(foo.Operator):
-    @property
-    def config(self):
-        return foo.OperatorConfig(
-            name="ask_anything",
-            label="Ask About This Lap",
-            description="Ask any question about this lap video using Pegasus",
-        )
-
-    def resolve_input(self, ctx):
-        inputs = types.Object()
-        inputs.str(
-            "question",
-            label="Your question",
-            description="e.g. 'Was my racing line through Turn 3 correct?'",
-            required=True,
-        )
-        return types.Property(inputs)
-
-    def execute(self, ctx):
+    def _ask_anything(self, ctx):
         question = ctx.params.get("question", "")
         video_id = _get_video_id(ctx)
         client   = _get_client()
@@ -362,43 +377,11 @@ class AskAnything(foo.Operator):
         n = _save_timeline_clips(ctx, result.data, "ask_moments", fps)
 
         ctx.set_progress(1.0, label="Done")
-        md = f"## {question}\n\n{result.data}\n\n_Saved {n} timestamp clip(s) to timeline._"
-        return {"answer": md}
+        return {"answer": f"## {question}\n\n{result.data}\n\n_Saved {n} timestamp clip(s) to timeline._"}
 
-    def resolve_output(self, ctx):
-        outputs = types.Object()
-        outputs.str("answer", label="Answer", view=types.MarkdownView(read_only=True))
-        return types.Property(outputs)
+    # ── Private: Generate Coaching Report ────────────────────────────────────
 
-
-# ---------------------------------------------------------------------------
-# Operator 4 — Generate Coaching Report
-# ---------------------------------------------------------------------------
-
-class GenerateCoachingReport(foo.Operator):
-    @property
-    def config(self):
-        return foo.OperatorConfig(
-            name="generate_coaching_report",
-            label="Generate Coaching Report",
-            description="Pegasus watches the full lap, then Groq LLaMA writes a professional report with charts.",
-        )
-
-    def resolve_input(self, ctx):
-        inputs = types.Object()
-        inputs.view("notice", view=types.Notice(
-            label="Takes 30-60 seconds. Pegasus analyzes the full lap, then Groq LLaMA writes a report with performance graphs."
-        ))
-        inputs.enum(
-            "focus",
-            values=["Full Analysis", "Racing Line Only", "Braking Only", "Throttle & Exit Only"],
-            label="Analysis Focus",
-            default="Full Analysis",
-            view=types.DropdownView(),
-        )
-        return types.Property(inputs)
-
-    def execute(self, ctx):
+    def _coaching_report(self, ctx):
         from groq import Groq
 
         focus       = ctx.params.get("focus", "Full Analysis")
@@ -503,38 +486,15 @@ class GenerateCoachingReport(foo.Operator):
         }
 
         ctx.set_progress(1.0, label="Done!")
-        return {"report": report + f"\n\n_Saved {n} timestamp clip(s) to timeline._", "line_chart": line_chart, "radar_chart": radar_chart}
+        return {
+            "report":      report + f"\n\n_Saved {n} timestamp clip(s) to timeline._",
+            "line_chart":  line_chart,
+            "radar_chart": radar_chart,
+        }
 
-    def resolve_output(self, ctx):
-        outputs = types.Object()
-        outputs.str("report", label="Coaching Report", view=types.MarkdownView(read_only=True))
-        outputs.plot("line_chart",  label="Performance Over Lap")
-        outputs.plot("radar_chart", label="Driver Skill Radar")
-        return types.Property(outputs)
+    # ── Private: Clear All Analyses ──────────────────────────────────────────
 
-
-# ---------------------------------------------------------------------------
-# Operator 5 — Clear History
-# ---------------------------------------------------------------------------
-
-class ClearHistory(foo.Operator):
-    @property
-    def config(self):
-        return foo.OperatorConfig(
-            name="clear_history",
-            label="Clear All Analyses",
-            description="Remove all stored lap_errors, best_moments, ask_moments, and coaching_moments from every sample",
-            allow_immediate_execution=True,
-        )
-
-    def resolve_input(self, ctx):
-        inputs = types.Object()
-        inputs.view("notice", view=types.Notice(
-            label="This will clear all analysis results (lap errors, best moments, ask moments, coaching moments) from every video in the dataset."
-        ))
-        return types.Property(inputs)
-
-    def execute(self, ctx):
+    def _clear_history(self, ctx):
         cleared = 0
         for sample in ctx.dataset:
             changed = False
@@ -551,19 +511,10 @@ class ClearHistory(foo.Operator):
         ctx.trigger("reload_dataset")
         return {"status": f"## Cleared\n\nRemoved all analysis data from {cleared} video(s). Timeline clips have been cleared."}
 
-    def resolve_output(self, ctx):
-        outputs = types.Object()
-        outputs.str("status", label="Result", view=types.MarkdownView(read_only=True))
-        return types.Property(outputs)
-
 
 # ---------------------------------------------------------------------------
-# Register all operators
+# Register
 # ---------------------------------------------------------------------------
 
 def register(plugin):
-    plugin.register(FindLapErrors)
-    plugin.register(FindBestMoments)
-    plugin.register(AskAnything)
-    plugin.register(GenerateCoachingReport)
-    plugin.register(ClearHistory)
+    plugin.register(PitLaneAI)
