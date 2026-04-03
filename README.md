@@ -248,6 +248,8 @@ Track operators can offer AI-powered lap review as a premium add-on service, pro
 Built by **Northeastern University** students at the Voxel51 Hackathon, April 2026.
 
 - [Pankhuri](https://github.com/pankhuri0209)
+- Aditya Gulati
+- Pridhi Balhara
 
 ---
 
